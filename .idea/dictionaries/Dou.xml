@@ -2,6 +2,7 @@
   <dictionary name="Dou">
     <words>
       <w>dealiasing</w>
+      <w>objectness</w>
     </words>
   </dictionary>
 </component>

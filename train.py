@@ -12,24 +12,33 @@ from torch.utils.data import DataLoader
 
 from models.backbone.base import Base as BackboneBase
 from config.train_config import TrainConfig as Config
-from dataset.base import Base as DatasetBase
-from logger import Logger as Log
+from data.base import Base as DatasetBase
+from utils.logger import Logger as Log
 from models.model import Model
 from roi.wrapper import Wrapper as ROIWrapper
 
 
-def _train(dataset_name: str, backbone_name: str, path_to_data_dir: str, path_to_checkpoints_dir: str, path_to_resuming_checkpoint: Optional[str]):
-    dataset = DatasetBase.from_name(dataset_name)(path_to_data_dir, DatasetBase.Mode.TRAIN, Config.IMAGE_MIN_SIDE, Config.IMAGE_MAX_SIDE)
+def _train(dataset_name: str, backbone_name: str, path_to_data_dir: str, path_to_checkpoints_dir: str,
+           path_to_resuming_checkpoint: Optional[str]):
+    # 根据使用的数据集的名字加载data文件夹中对应的.py文件
+    dataset = DatasetBase.from_name(dataset_name)(path_to_data_dir, DatasetBase.Mode.TRAIN, Config.IMAGE_MIN_SIDE,
+                                                  Config.IMAGE_MAX_SIDE)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=8, pin_memory=True)
 
     Log.i('Found {:d} samples'.format(len(dataset)))
 
+    # 根据backbone的名字加载对应的类
     backbone = BackboneBase.from_name(backbone_name)(pretrained=True)
+
+    # rpn_pre_nms_top_n是在使用nms之前按照概率自高到低取rpn_pre_nms_top_n个anchor
+    # rpn_post_nms_top_n是使用nms之后按照概率自高到低取rpn_post_nms_top_n个anchor
     model = Model(backbone, dataset.num_classes(), pooling_mode=Config.POOLING_MODE,
                   anchor_ratios=Config.ANCHOR_RATIOS, anchor_scales=Config.ANCHOR_SCALES,
                   rpn_pre_nms_top_n=Config.RPN_PRE_NMS_TOP_N, rpn_post_nms_top_n=Config.RPN_POST_NMS_TOP_N).cuda()
+
     optimizer = optim.SGD(model.parameters(), lr=Config.LEARNING_RATE,
                           momentum=Config.MOMENTUM, weight_decay=Config.WEIGHT_DECAY)
+    # 学习率自适应衰减，也就是当训练epoch达到milestones值时,初始学习率乘以gamma得到新的学习率;
     scheduler = MultiStepLR(optimizer, milestones=Config.STEP_LR_SIZES, gamma=Config.STEP_LR_GAMMA)
 
     step = 0
@@ -38,10 +47,12 @@ def _train(dataset_name: str, backbone_name: str, path_to_data_dir: str, path_to
     summary_writer = SummaryWriter(os.path.join(path_to_checkpoints_dir, 'summaries'))
     should_stop = False
 
+    # 每多少轮打印结果；每多少轮输出checkpoint
     num_steps_to_display = Config.NUM_STEPS_TO_DISPLAY
     num_steps_to_snapshot = Config.NUM_STEPS_TO_SNAPSHOT
     num_steps_to_finish = Config.NUM_STEPS_TO_FINISH
 
+    # 如果传入了上一次训练的结果，将会从上一次训练的地方开始
     if path_to_resuming_checkpoint is not None:
         step = model.load(path_to_resuming_checkpoint, optimizer, scheduler)
         Log.i(f'Model has been restored from file: {path_to_resuming_checkpoint}')
@@ -59,7 +70,8 @@ def _train(dataset_name: str, backbone_name: str, path_to_data_dir: str, path_to
             forward_input = Model.ForwardInput.Train(image, gt_classes=labels, gt_bboxes=bboxes)
             forward_output: Model.ForwardOutput.Train = model.train().forward(forward_input)
 
-            anchor_objectness_loss, anchor_transformer_loss, proposal_class_loss, proposal_transformer_loss = forward_output
+            anchor_objectness_loss, anchor_transformer_loss, \
+                proposal_class_loss, proposal_transformer_loss = forward_output
             loss = anchor_objectness_loss + anchor_transformer_loss + proposal_class_loss + proposal_transformer_loss
 
             optimizer.zero_grad()
