@@ -1,0 +1,2 @@
+torchvision~=0.15.2
+tensorboardx~=2.6.1
